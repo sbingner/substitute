@@ -390,74 +390,110 @@ int execmem_foreign_write_with_pc_patch(struct execmem_foreign_write *writes,
             ret = SUBSTITUTE_ERR_VM;
             goto fail;
         }
-        /* Instead of trying to set the existing region to write, which may
-         * fail due to max_protection, we make a fresh copy and remap it over
-         * the original. */
-        void *new = mmap(NULL, len, PROT_READ | PROT_WRITE,
-                         MAP_ANON | MAP_SHARED, -1, 0);
-        if (new == MAP_FAILED) {
-            ret = SUBSTITUTE_ERR_VM;
-            goto fail;
-        }
-        /* Ideally, if the original page wasn't mapped anywhere else, no actual
-         * copy will take place: new will be CoW, then we unmap the original so
-         * new becomes the sole owner before actually writing.  Though, for all
-         * I know, these trips through the VM system could be slower than just
-         * memcpying a page or two... */
-        kr = vm_copy(task_self, page_start, len, (vm_address_t) new);
-        if (kr) {
-            ret = SUBSTITUTE_ERR_VM;
-            goto fail_unmap;
-        }
-        /* Start of danger zone: between the mmap PROT_NONE and remap, we avoid
-         * using any standard library functions in case the user is trying to
-         * hook one of them.  (This includes the mmap, since there's an epilog
-         * after the actual syscall instruction.)
-         * This includes the signal handler! */
-        void *mmret = manual_mmap((void *) page_start, len, PROT_NONE,
-                                  MAP_ANON | MAP_SHARED | MAP_FIXED, -1, 0);
-        /* MAP_FAILED is a userspace construct */
-        if ((uintptr_t) mmret & 0xfff) {
-            ret = SUBSTITUTE_ERR_VM;
-            goto fail_unmap;
-        }
-        /* Write patches to the copy. */
-        for (size_t i = first; i <= last; i++) {
-            struct execmem_foreign_write *write = &writes[i];
-            ptrdiff_t off = (uintptr_t) write->dst - page_start;
-            manual_memcpy(new + off, write->src, write->len);
-        }
-        if (callback) {
-            /* Actually run the callback for any threads which are paused at an
-             * affected PC, or are running and don't get scheduled by the
-             * kernel in time to segfault.  Any thread which moves to an
-             * affected PC *after* run_pc_patch() is assumed to do so by
-             * calling the function in question, so they can't get past the
-             * first instruction and it doesn't matter whether or not they're
-             * patched.  (A call instruction within the affected region would
-             * break this assumption, as then a thread could move to an
-             * affected PC by returning. */
-            if ((ret = run_pc_patch(reply_port)))
+        size_t page_chunk = len;
+        void *new = MAP_FAILED;
+retry_chunk:
+        for (int shift=0; shift<len; shift += page_chunk) {
+            /* Instead of trying to set the existing region to write, which may
+            * fail due to max_protection, we make a fresh copy and remap it over
+            * the original. */
+            new = mmap(NULL, page_chunk, PROT_READ | PROT_WRITE,
+                            MAP_ANON | MAP_SHARED, -1, 0);
+            if (new == MAP_FAILED) {
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail;
+            }
+            /* Ideally, if the original page wasn't mapped anywhere else, no actual
+            * copy will take place: new will be CoW, then we unmap the original so
+            * new becomes the sole owner before actually writing.  Though, for all
+            * I know, these trips through the VM system could be slower than just
+            * memcpying a page or two... */
+            kr = vm_copy(task_self, page_start+shift, page_chunk, (vm_address_t) new);
+            if (kr) {
+                ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
-        }
+            }
+            /* Start of danger zone: between the mmap PROT_NONE and remap, we avoid
+            * using any standard library functions in case the user is trying to
+            * hook one of them.  (This includes the mmap, since there's an epilog
+            * after the actual syscall instruction.)
+            * This includes the signal handler! */
+            void *mmret = manual_mmap((void *) page_start+shift, page_chunk, PROT_NONE,
+                                    MAP_ANON | MAP_SHARED | MAP_FIXED, -1, 0);
+            /* MAP_FAILED is a userspace construct */
+            if ((uintptr_t) mmret & 0xfff) {
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail_unmap;
+            }
+            /* Write patches to the copy. */
+            for (size_t i = first; i <= last; i++) {
+                struct execmem_foreign_write *write = &writes[i];
+                ptrdiff_t off = (uintptr_t) write->dst - page_start;
+                size_t plen = write->len;
+                // Patch does not touch this chunk
+                if (off > shift+page_chunk || off+plen < shift) {
+                    continue;
+                }
+                // Patch starts in previous chunk
+                if (shift && off < shift) {
+                    plen = off+plen-page_chunk;
+                    off = shift;
+                }
+                // Patch extends into next chunk
+                if (off+plen-shift > page_chunk) {
+                    plen = shift+page_chunk-off;
+                }
+                manual_memcpy(new + off - shift, (uintptr_t)write->src + ( write->len - plen ), plen);
+            }
+            if (callback) {
+                /* Actually run the callback for any threads which are paused at an
+                * affected PC, or are running and don't get scheduled by the
+                * kernel in time to segfault.  Any thread which moves to an
+                * affected PC *after* run_pc_patch() is assumed to do so by
+                * calling the function in question, so they can't get past the
+                * first instruction and it doesn't matter whether or not they're
+                * patched.  (A call instruction within the affected region would
+                * break this assumption, as then a thread could move to an
+                * affected PC by returning. */
+                if ((ret = run_pc_patch(reply_port)))
+                    goto fail_unmap;
+            }
 
-        /* Protect new like the original, and move it into place. */
-        if (manual_mprotect(new, len, prot)) {
-            ret = SUBSTITUTE_ERR_VM;
-            goto fail_unmap;
+            /* Protect new like the original, and move it into place. */
+                if (manual_mprotect(new, page_chunk, prot)) {
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail_unmap;
+            }
+            vm_prot_t c, m;
+            mach_vm_address_t target = page_start + shift;
+            kr = manual_mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
+                                      VM_FLAGS_OVERWRITE, task_self,
+                                      (mach_vm_address_t) new, /*copy*/ TRUE,
+                                      &c, &m, inherit, reply_port);
+            if (kr) {
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail_unmap;
+            }
+            /* Danger zone over.  Ignore errors when unmapping the temporary buffer. */
+            munmap(new, page_chunk);
+            new = MAP_FAILED;
+            vm_prot_t nprot;
+            vm_inherit_t ninherit;
+            kr = get_page_info(page_start, &nprot, &ninherit);
+            if (kr) {
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail;
+            }
+            if (nprot != prot || ninherit != inherit) {
+                if (page_chunk != PAGE_SIZE) {
+                    LOG("permissions wrong on remapped page; retrying with small chunk size");
+                    page_chunk = PAGE_SIZE;
+                    goto retry_chunk;
+                }
+                ret = SUBSTITUTE_ERR_VM;
+                goto fail;
+            }
         }
-        vm_prot_t c, m;
-        mach_vm_address_t target = page_start;
-        kr = manual_mach_vm_remap(mach_task_self(), &target, len, 0,
-                                  VM_FLAGS_OVERWRITE, task_self,
-                                  (mach_vm_address_t) new, /*copy*/ TRUE,
-                                  &c, &m, inherit, reply_port);
-        if (kr) {
-            ret = SUBSTITUTE_ERR_VM;
-            goto fail_unmap;
-        }
-        /* Danger zone over.  Ignore errors when unmapping the temporary buffer. */
-        munmap(new, len);
 
         continue;
 
@@ -465,7 +501,9 @@ int execmem_foreign_write_with_pc_patch(struct execmem_foreign_write *writes,
         /* This is probably useless, since the original page is gone
          * forever (intentionally, see above).  May as well arrange the
          * deck chairs, though. */
-        munmap(new, len);
+        if (new != MAP_FAILED) {
+            munmap(new, page_chunk);
+        }
         goto fail;
     }
 
