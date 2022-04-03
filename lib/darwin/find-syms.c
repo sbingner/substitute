@@ -384,9 +384,11 @@ end:
 static void inspect_dyld() {
     const struct dyld_all_image_infos *aii = dyld_get_all_image_infos();
     const void *dyld_hdr = aii->dyldImageLoadAddress;
+#if TARGET_OS_SIMULATOR
     if (strstr(_dyld_get_image_name(0), "dyld_sim")) {
         dyld_hdr = _dyld_get_image_header(0);
     }
+#endif
 
     const void *libdyld_hdr = NULL;
     intptr_t libdyld_slide = 0;
