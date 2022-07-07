@@ -68,14 +68,18 @@ int execmem_alloc_unsealed(uintptr_t hint, void **page_p, size_t *size_p) {
     *size_p = PAGE_SIZE;
     *page_p = mmap((void *) hint, *size_p, PROT_READ | PROT_WRITE,
                    MAP_ANON | MAP_SHARED, -1, 0);
-    if (*page_p == MAP_FAILED)
+    if (*page_p == MAP_FAILED) {
+        LOG("execmem_alloc_unsealed failed");
         return SUBSTITUTE_ERR_VM;
+    }
     return SUBSTITUTE_OK;
 }
 
 int execmem_seal(void *page) {
-    if (mprotect(page, PAGE_SIZE, PROT_READ | PROT_EXEC))
+    if (mprotect(page, PAGE_SIZE, PROT_READ | PROT_EXEC)) {
+        LOG("execmem_seal failed");
         return SUBSTITUTE_ERR_VM;
+    }
     return SUBSTITUTE_OK;
 }
 
@@ -387,6 +391,7 @@ int execmem_foreign_write_with_pc_patch(struct execmem_foreign_write *writes,
         if (kr) {
             /* Weird; this probably means the region doesn't exist, but we should
              * have already read from the memory in order to generate the patch. */
+            LOG("Weird; this probably means the region doesn't exist");
             ret = SUBSTITUTE_ERR_VM;
             goto fail;
         }
@@ -400,6 +405,7 @@ retry_chunk:
             new = mmap(NULL, page_chunk, PROT_READ | PROT_WRITE,
                             MAP_ANON | MAP_SHARED, -1, 0);
             if (new == MAP_FAILED) {
+                LOG("mmap failed");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail;
             }
@@ -410,6 +416,7 @@ retry_chunk:
             * memcpying a page or two... */
             kr = vm_copy(task_self, page_start+shift, page_chunk, (vm_address_t) new);
             if (kr) {
+                LOG("vm_copy failed");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
             }
@@ -418,10 +425,12 @@ retry_chunk:
             * hook one of them.  (This includes the mmap, since there's an epilog
             * after the actual syscall instruction.)
             * This includes the signal handler! */
-            void *mmret = manual_mmap((void *) page_start+shift, page_chunk, PROT_NONE,
+            void *mmret = mmap((void *) page_start+shift, page_chunk, PROT_NONE,
                                     MAP_ANON | MAP_SHARED | MAP_FIXED, -1, 0);
             /* MAP_FAILED is a userspace construct */
-            if ((uintptr_t) mmret & 0xfff) {
+            //if ((uintptr_t) mmret & 0xfff) {
+            if (mmret == MAP_FAILED) {
+                LOG("mmap in danger zone failed %d %s", errno, strerror(errno));
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
             }
@@ -460,17 +469,19 @@ retry_chunk:
             }
 
             /* Protect new like the original, and move it into place. */
-                if (manual_mprotect(new, page_chunk, prot)) {
+            if (manual_mprotect(new, page_chunk, prot)) {
+                LOG("manual_mprotect failed");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
             }
             vm_prot_t c, m;
             mach_vm_address_t target = page_start + shift;
-            kr = manual_mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
+            kr = mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
                                       VM_FLAGS_OVERWRITE, task_self,
                                       (mach_vm_address_t) new, /*copy*/ TRUE,
-                                      &c, &m, inherit, reply_port);
+                                      &c, &m, inherit); //, reply_port);
             if (kr) {
+                LOG("manual_mach_vm_remap failed");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
             }
@@ -481,6 +492,7 @@ retry_chunk:
             vm_inherit_t ninherit;
             kr = get_page_info(page_start, &nprot, &ninherit);
             if (kr) {
+                LOG("get_page_info failed");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail;
             }
@@ -490,6 +502,7 @@ retry_chunk:
                     page_chunk = PAGE_SIZE;
                     goto retry_chunk;
                 }
+                LOG("nprot != prot || ninherit != inherit");
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail;
             }

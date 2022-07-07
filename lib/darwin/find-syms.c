@@ -28,6 +28,7 @@ static bool isUsingDyld3;
 static bool isUsingDyld4;
 static uintptr_t (*dyld3_MachOLoaded_getSlide)(const void *);
 static struct mach_header_64 *(*dyld4_Loader_loadAddress)(const void *dlhandle, const void *runtimeState);
+static int (*dyld4_Loader_validLoader)(const void *runtimeState, const void *dlhandle);
 static void **dyld4_runtimeState_addr;
 
 
@@ -331,7 +332,7 @@ ok: ;
                 symtab = (void *) sc->vmaddr + syc.symoff - sc->fileoff;
             if (syc.stroff - sc->fileoff < sc->filesize)
                 strtab = (void *) sc->vmaddr + syc.stroff - sc->fileoff;
-            if (*slide == -1 && sc->fileoff == 0) {
+            if (*slide == -1 && sc->fileoff == 0) { // && sc->fileoff == 0) {
                 // used only for dyld
                 *slide = (uintptr_t) hdr - sc->vmaddr;
             }
@@ -381,9 +382,10 @@ end:
  * the method used is somewhat convoluted in an attempt to maximize stability.
  */
 
+const void *dyld_hdr;
 static void inspect_dyld() {
     const struct dyld_all_image_infos *aii = dyld_get_all_image_infos();
-    const void *dyld_hdr = aii->dyldImageLoadAddress;
+    dyld_hdr = aii->dyldImageLoadAddress;
 
     const void *libdyld_hdr = NULL;
     intptr_t libdyld_slide = 0;
@@ -395,7 +397,7 @@ static void inspect_dyld() {
         }
     }
 
-    const char *names[8] = { "__ZNK16ImageLoaderMachO8getSlideEv",
+    const char *names[9] = { "__ZNK16ImageLoaderMachO8getSlideEv",
                              "__ZNK16ImageLoaderMachO10machHeaderEv",
                              "__ZN4dyldL20sAllCacheImagesProxyE",
                              "__ZN20ImageLoaderMegaDylib13isCacheHandleEPvPjPh",
@@ -403,14 +405,16 @@ static void inspect_dyld() {
                              "__ZNK20ImageLoaderMegaDylib20getIndexedMachHeaderEj",
                              "__ZNK5dyld311MachOLoaded8getSlideEv",
                              "__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE",
+                             "__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE",
     };
-    void *syms[8];
+    void *syms[9];
     intptr_t dyld_slide = -1;
-    find_syms_raw(dyld_hdr, &dyld_slide, names, syms, 8);
-    if (syms[6] && syms[7]) {
+    find_syms_raw(dyld_hdr, &dyld_slide, names, syms, 9);
+    if (syms[6] && syms[7] && syms[8]) {
         isUsingDyld4 = true;
         dyld3_MachOLoaded_getSlide = make_sym_callable(syms[6]);
         dyld4_Loader_loadAddress = make_sym_callable(syms[7]);
+        dyld4_Loader_validLoader = make_sym_callable(syms[8]);
     } else {
         if (!syms[0] || !syms[1])
             substitute_panic("couldn't find ImageLoader methods\n");
@@ -460,7 +464,9 @@ struct substitute_image *substitute_open_image(const char *filename) {
 
     void* image;
     if (isUsingDyld4) {
-        image = dyld4_Loader_loadAddress((uint64_t)dlhandle>>1, *dyld4_runtimeState_addr);
+        int valid = dyld4_Loader_validLoader(*dyld4_runtimeState_addr, ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr);
+        image = dyld4_Loader_loadAddress(((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr, *dyld4_runtimeState_addr);
+        // image = dyld4_Loader_loadAddress((uint64_t)dlhandle>>1, *dyld4_runtimeState_addr);
     } else if (isUsingDyld3) {
         image = (void*)((((uintptr_t)dlhandle) & (-2)) << 5);
     } else {
