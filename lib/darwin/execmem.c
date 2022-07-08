@@ -425,12 +425,10 @@ retry_chunk:
             * hook one of them.  (This includes the mmap, since there's an epilog
             * after the actual syscall instruction.)
             * This includes the signal handler! */
-            void *mmret = mmap((void *) page_start+shift, page_chunk, PROT_NONE,
+            void *mmret = manual_mmap((void *) page_start+shift, page_chunk, PROT_NONE,
                                     MAP_ANON | MAP_SHARED | MAP_FIXED, -1, 0);
             /* MAP_FAILED is a userspace construct */
-            //if ((uintptr_t) mmret & 0xfff) {
-            if (mmret == MAP_FAILED) {
-                LOG("mmap in danger zone failed %d %s", errno, strerror(errno));
+            if ((uintptr_t) mmret & 0xfff) {
                 ret = SUBSTITUTE_ERR_VM;
                 goto fail_unmap;
             }

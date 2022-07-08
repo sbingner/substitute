@@ -464,9 +464,11 @@ struct substitute_image *substitute_open_image(const char *filename) {
 
     void* image;
     if (isUsingDyld4) {
-        int valid = dyld4_Loader_validLoader(*dyld4_runtimeState_addr, ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr);
-        image = dyld4_Loader_loadAddress(((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr, *dyld4_runtimeState_addr);
-        // image = dyld4_Loader_loadAddress((uint64_t)dlhandle>>1, *dyld4_runtimeState_addr);
+        uint64_t dladdr = ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr;
+        if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
+            dladdr = (uint64_t)dlhandle >> 1; // iOS15
+        }
+        image = dyld4_Loader_loadAddress(dladdr, *dyld4_runtimeState_addr);
     } else if (isUsingDyld3) {
         image = (void*)((((uintptr_t)dlhandle) & (-2)) << 5);
     } else {
