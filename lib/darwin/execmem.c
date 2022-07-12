@@ -31,8 +31,11 @@ __typeof__(mprotect) manual_mprotect;
 GEN_SYSCALL(mprotect, 74);
 __typeof__(mach_msg) manual_mach_msg;
 GEN_SYSCALL(mach_msg, -31);
+//__typeof__(mach_msg) manual_mach_msg2;
+//GEN_SYSCALL(mach_msg2, -47);
 __typeof__(mach_thread_self) manual_thread_self;
 GEN_SYSCALL(thread_self, -27);
+__attribute__((weak_import)) extern void (*mach_msg2_internal)(void);
 
 extern int __sigaction(int, struct __sigaction * __restrict,
                        struct sigaction * __restrict);
@@ -474,10 +477,18 @@ retry_chunk:
             }
             vm_prot_t c, m;
             mach_vm_address_t target = page_start + shift;
-            kr = mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
-                                      VM_FLAGS_OVERWRITE, task_self,
-                                      (mach_vm_address_t) new, /*copy*/ TRUE,
-                                      &c, &m, inherit); //, reply_port);
+            if ((volatile void *)&mach_msg2_internal != NULL) {
+                // TODO: Implement manual_mach_vm_remap for iOS16+
+                kr = mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
+                                          VM_FLAGS_OVERWRITE, task_self,
+                                          (mach_vm_address_t) new, /*copy*/ TRUE,
+                                          &c, &m, inherit);
+            } else {
+                kr = manual_mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
+                                          VM_FLAGS_OVERWRITE, task_self,
+                                          (mach_vm_address_t) new, /*copy*/ TRUE,
+                                          &c, &m, inherit, reply_port);
+            }
             if (kr) {
                 LOG("manual_mach_vm_remap failed");
                 ret = SUBSTITUTE_ERR_VM;
