@@ -332,7 +332,7 @@ ok: ;
                 symtab = (void *) sc->vmaddr + syc.symoff - sc->fileoff;
             if (syc.stroff - sc->fileoff < sc->filesize)
                 strtab = (void *) sc->vmaddr + syc.stroff - sc->fileoff;
-            if (*slide == -1 && sc->fileoff == 0) { // && sc->fileoff == 0) {
+            if (*slide == -1) {
                 // used only for dyld
                 *slide = (uintptr_t) hdr - sc->vmaddr;
             }
