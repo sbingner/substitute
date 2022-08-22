@@ -1,6 +1,7 @@
 #ifdef __APPLE__
 
 #include <stdbool.h>
+#include <ptrauth.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -464,9 +465,13 @@ struct substitute_image *substitute_open_image(const char *filename) {
 
     void* image;
     if (isUsingDyld4) {
+        dlhandle = ptrauth_strip(dlhandle, ptrauth_key_process_dependent_data);
         uint64_t dladdr = ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr;
         if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
             dladdr = (uint64_t)dlhandle >> 1; // iOS15
+            if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
+                substitute_panic("substitute_open_image: Unable to find valid loader addr from handle\n");
+            }
         }
         image = dyld4_Loader_loadAddress(dladdr, *dyld4_runtimeState_addr);
     } else if (isUsingDyld3) {
