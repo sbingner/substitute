@@ -158,7 +158,9 @@ static void open_shared_cache_file_once() {
             return;
     }
 #if __IPHONE_OS_VERSION_MIN_REQUIRED
-    oscf_try_dir(IPHONE_DYLD_SHARED_CACHE_DIR, archp, dch);
+    if (!oscf_try_dir(IPHONE_DYLD_SHARED_CACHE_DIR, archp, dch)) {
+        oscf_try_dir(IPHONE_DYLD_SHARED_CACHE_DIR_OLD, archp, dch);
+    }
 #else
     oscf_try_dir(MACOSX_DYLD_SHARED_CACHE_DIR, archp, dch);
 #endif

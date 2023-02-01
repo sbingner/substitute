@@ -158,7 +158,8 @@ struct dyld_cache_local_symbols_entry_64
 
 
 #define MACOSX_DYLD_SHARED_CACHE_DIR	"/var/db/dyld/"
-#define IPHONE_DYLD_SHARED_CACHE_DIR	"/System/Library/Caches/com.apple.dyld/"
+#define IPHONE_DYLD_SHARED_CACHE_DIR	"/System/Cryptexes/OS/System/Library/Caches/com.apple.dyld/"
+#define IPHONE_DYLD_SHARED_CACHE_DIR_OLD	"/System/Library/Caches/com.apple.dyld/"
 #define DYLD_SHARED_CACHE_BASE_NAME		"dyld_shared_cache_"
 
 
