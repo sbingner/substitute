@@ -23,22 +23,325 @@
 #include <signal.h>
 #include <pthread.h>
 
+#define MACH_MSG_OPTION_NONE    0x00000000
+
+#define MACH_SEND_MSG           0x00000001
+#define MACH_RCV_MSG            0x00000002
+
+#define MACH_RCV_LARGE          0x00000004
+#define MACH_RCV_LARGE_IDENTITY 0x00000008
+
+#define MACH_SEND_TIMEOUT       0x00000010
+#define MACH_SEND_OVERRIDE      0x00000020
+#define MACH_SEND_INTERRUPT     0x00000040
+#define MACH_SEND_NOTIFY        0x00000080
+#define MACH_SEND_ALWAYS        0x00010000
+#define MACH_SEND_FILTER_NONFATAL        0x00010000
+#define MACH_SEND_TRAILER       0x00020000
+#define MACH_SEND_NOIMPORTANCE  0x00040000
+#define MACH_SEND_NODENAP       MACH_SEND_NOIMPORTANCE
+#define MACH_SEND_IMPORTANCE    0x00080000
+#define MACH_SEND_SYNC_OVERRIDE 0x00100000
+#define MACH_SEND_PROPAGATE_QOS 0x00200000
+#define MACH_SEND_SYNC_USE_THRPRI   MACH_SEND_PROPAGATE_QOS
+#define MACH_SEND_KERNEL        0x00400000
+#define MACH_SEND_SYNC_BOOTSTRAP_CHECKIN    0x00800000
+
+#define MACH_RCV_TIMEOUT        0x00000100
+#define MACH_RCV_NOTIFY         0x00000000
+#define MACH_RCV_INTERRUPT      0x00000400
+#define MACH_RCV_VOUCHER        0x00000800
+#define MACH_RCV_OVERWRITE      0x00000000
+#define MACH_RCV_GUARDED_DESC   0x00001000
+#define MACH_RCV_SYNC_WAIT      0x00004000
+#define MACH_RCV_SYNC_PEEK      0x00008000
+#define MACH_MSG_STRICT_REPLY   0x00000200
+
+#define LIBSYSCALL_MSGV_AUX_MAX_SIZE 128
+
+typedef uint64_t mach_msg_option64_t;
+
+enum mach_msg_option64_t {
+    	MACH64_MSG_OPTION_NONE                 = 0x0ull,
+        MACH64_SEND_MSG                        = MACH_SEND_MSG,
+        MACH64_RCV_MSG                         = MACH_RCV_MSG,
+        MACH64_RCV_LARGE                       = MACH_RCV_LARGE,
+        MACH64_RCV_LARGE_IDENTITY              = MACH_RCV_LARGE_IDENTITY,
+        MACH64_SEND_TIMEOUT                    = MACH_SEND_TIMEOUT,
+        MACH64_SEND_OVERRIDE                   = MACH_SEND_OVERRIDE,
+        MACH64_SEND_INTERRUPT                  = MACH_SEND_INTERRUPT,
+        MACH64_SEND_NOTIFY                     = MACH_SEND_NOTIFY,
+        MACH64_SEND_ALWAYS                     = MACH_SEND_ALWAYS,
+        MACH64_SEND_IMPORTANCE                 = MACH_SEND_IMPORTANCE,
+        MACH64_SEND_KERNEL                     = MACH_SEND_KERNEL,
+        MACH64_SEND_FILTER_NONFATAL            = MACH_SEND_FILTER_NONFATAL,
+        MACH64_SEND_TRAILER                    = MACH_SEND_TRAILER,
+        MACH64_SEND_NOIMPORTANCE               = MACH_SEND_NOIMPORTANCE,
+        MACH64_SEND_NODENAP                    = MACH_SEND_NODENAP,
+        MACH64_SEND_SYNC_OVERRIDE              = MACH_SEND_SYNC_OVERRIDE,
+        MACH64_SEND_PROPAGATE_QOS              = MACH_SEND_PROPAGATE_QOS,
+        MACH64_SEND_SYNC_BOOTSTRAP_CHECKIN     = MACH_SEND_SYNC_BOOTSTRAP_CHECKIN,
+        MACH64_RCV_TIMEOUT                     = MACH_RCV_TIMEOUT,
+        MACH64_RCV_INTERRUPT                   = MACH_RCV_INTERRUPT,
+        MACH64_RCV_VOUCHER                     = MACH_RCV_VOUCHER,
+        MACH64_RCV_GUARDED_DESC                = MACH_RCV_GUARDED_DESC,
+        MACH64_RCV_SYNC_WAIT                   = MACH_RCV_SYNC_WAIT,
+        MACH64_RCV_SYNC_PEEK                   = MACH_RCV_SYNC_PEEK,
+        MACH64_MSG_STRICT_REPLY                = MACH_MSG_STRICT_REPLY,
+
+        MACH64_MSG_VECTOR                      = 0x0000000100000000ull,
+        MACH64_SEND_KOBJECT_CALL               = 0x0000000200000000ull,
+        MACH64_SEND_MQ_CALL                    = 0x0000000400000000ull,
+        MACH64_SEND_ANY                        = 0x0000000800000000ull,
+        MACH64_SEND_DK_CALL                    = 0x0000001000000000ull,
+        MACH64_RCV_LINEAR_VECTOR               = 0x1000000000000000ull,
+        MACH64_RCV_STACK                       = 0x2000000000000000ull,
+        MACH64_PEEK_MSG                        = 0x4000000000000000ull,
+        MACH64_MACH_MSG2                       = 0x8000000000000000ull
+};
+
+#define LIBMACH_OPTIONS64 (MACH64_SEND_INTERRUPT|MACH64_RCV_INTERRUPT)
+
+typedef uint32_t mach_msgv_index_t;
+enum mach_msgv_index_t {
+    MACH_MSGV_IDX_MSG = 0,
+    MACH_MSGV_IDX_AUX = 1,
+};
+
+
+typedef struct {
+    mach_msg_size_t         msgdh_size;
+    uint32_t                msgdh_reserved;
+} mach_msg_aux_header_t;
+
+typedef struct {
+    /* a mach_msg_header_t* or mach_msg_aux_header_t* */
+    mach_vm_address_t               msgv_data;
+    /* if msgv_rcv_addr is non-zero, use it as rcv address instead */
+    mach_vm_address_t               msgv_rcv_addr;
+    mach_msg_size_t                 msgv_send_size;
+    mach_msg_size_t                 msgv_rcv_size;
+} mach_msg_vector_t;
+
+static mach_msg_return_t manual_mach_msg2_internal(void *data, mach_msg_option64_t option64, uint64_t msgh_bits_and_send_size, uint64_t msgh_remote_and_local_port, uint64_t msgh_voucher_and_id, uint64_t desc_count_and_rcv_name, uint64_t rcv_size_and_priority, uint64_t timeout);
+
 int manual_sigreturn(void *, int);
 GEN_SYSCALL(sigreturn, 184);
 __typeof__(mmap) manual_mmap;
 GEN_SYSCALL(mmap, 197);
 __typeof__(mprotect) manual_mprotect;
 GEN_SYSCALL(mprotect, 74);
-__typeof__(mach_msg) manual_mach_msg;
-GEN_SYSCALL(mach_msg, -31);
-//__typeof__(mach_msg) manual_mach_msg2;
-//GEN_SYSCALL(mach_msg2, -47);
+__typeof__(mach_msg) manual_old_mach_msg;
+GEN_SYSCALL(old_mach_msg, -31);
+mach_msg_return_t manual_mach_msg2_trap(void *data, mach_msg_option64_t option64, uint64_t msgh_bits_and_send_size, uint64_t msgh_remote_and_local_port, uint64_t msgh_voucher_and_id, uint64_t desc_count_and_rcv_name, uint64_t rcv_size_and_priority, uint64_t timeout);
+GEN_SYSCALL(mach_msg2_trap, -47);
 __typeof__(mach_thread_self) manual_thread_self;
 GEN_SYSCALL(thread_self, -27);
-__attribute__((weak_import)) extern void (*mach_msg2_internal)(void);
+__attribute__((weak_import)) extern mach_msg_return_t (*mach_msg2_internal)(void *data, mach_msg_option64_t option64, uint64_t msgh_bits_and_send_size, uint64_t msgh_remote_and_local_port, uint64_t msgh_voucher_and_id, uint64_t desc_count_and_rcv_name, uint64_t rcv_size_and_priority, uint64_t timeout);
 
 extern int __sigaction(int, struct __sigaction * __restrict,
                        struct sigaction * __restrict);
+
+static inline mach_msg_return_t manual_mach_msg2(
+        void *data,
+        mach_msg_option64_t option64,
+        mach_msg_header_t header,
+        mach_msg_size_t send_size,
+        mach_msg_size_t rcv_size,
+        mach_port_t rcv_name,
+        uint64_t timeout,
+        uint32_t priority)
+{
+    mach_msg_base_t *base;
+    mach_msg_size_t descriptors;
+
+    if (option64 & MACH64_MSG_VECTOR) {
+        base = (mach_msg_base_t *)((mach_msg_vector_t *)data)->msgv_data;
+    } else {
+        base = (mach_msg_base_t *)data;
+    }
+
+    if ((option64 & MACH64_SEND_MSG) && (base->header.msgh_bits & MACH_MSGH_BITS_COMPLEX)) {
+        descriptors = base->body.msgh_descriptor_count;
+    } else {
+        descriptors = 0;
+    }
+
+#define MACH_MSG2_SHIFT_ARGS(lo, hi) ((uint64_t)hi << 32 | (uint32_t)lo)
+    return manual_mach_msg2_internal(data, option64,
+            MACH_MSG2_SHIFT_ARGS(header.msgh_bits, send_size),
+            MACH_MSG2_SHIFT_ARGS(header.msgh_remote_port, header.msgh_local_port),
+            MACH_MSG2_SHIFT_ARGS(header.msgh_voucher_port, header.msgh_id),
+            MACH_MSG2_SHIFT_ARGS(descriptors, rcv_name),
+            MACH_MSG2_SHIFT_ARGS(rcv_size, priority), timeout);
+#undef MACH_MSG2_SHIFT_ARGS
+}
+
+static inline mach_msg_option64_t
+mach_msg_options_after_interruption(mach_msg_option64_t option64)
+{
+    if ((option64 & MACH64_SEND_MSG) && (option64 & MACH64_RCV_MSG)) {
+        option64 &= ~MACH64_RCV_SYNC_WAIT;
+    }
+    option64 &= ~(LIBMACH_OPTIONS64 | MACH64_SEND_MSG);
+    return option64;
+}
+
+static mach_msg_return_t manual_mach_msg2_internal(
+        void *data,
+        mach_msg_option64_t option64,
+        uint64_t msgh_bits_and_send_size,
+        uint64_t msgh_remote_and_local_port,
+        uint64_t msgh_voucher_and_id,
+        uint64_t desc_count_and_rcv_name,
+        uint64_t rcv_size_and_priority,
+        uint64_t timeout)
+{
+    mach_msg_return_t mr;
+
+    mr = manual_mach_msg2_trap(data,
+            option64 & ~LIBMACH_OPTIONS64,
+            msgh_bits_and_send_size,
+            msgh_remote_and_local_port,
+            msgh_voucher_and_id,
+            desc_count_and_rcv_name,
+            rcv_size_and_priority,
+            timeout);
+
+
+    if (mr == MACH_MSG_SUCCESS) {
+        return MACH_MSG_SUCCESS;
+        }
+
+    if ((option64 & MACH64_SEND_INTERRUPT) == 0) {
+        while (mr == MACH_SEND_INTERRUPTED) {
+            mr = manual_mach_msg2_trap(data,
+                    option64 & ~LIBMACH_OPTIONS64,
+                    msgh_bits_and_send_size,
+                    msgh_remote_and_local_port,
+                    msgh_voucher_and_id,
+                    desc_count_and_rcv_name,
+                    rcv_size_and_priority,
+                    timeout);
+        }
+    }
+
+    if ((option64 & MACH64_RCV_INTERRUPT) == 0) {
+        while (mr == MACH_RCV_INTERRUPTED) {
+            mr = manual_mach_msg2_trap(data,
+                    mach_msg_options_after_interruption(option64),
+                    msgh_bits_and_send_size & 0xffffffffull, /* zero send size */
+                    msgh_remote_and_local_port,
+                    msgh_voucher_and_id,
+                    desc_count_and_rcv_name,
+                    rcv_size_and_priority,
+                    timeout);
+        }
+    }
+
+    return mr;
+
+}
+
+static mach_msg_return_t manual_new_mach_msg_overwrite(
+        mach_msg_header_t *msg,
+        mach_msg_option_t option,
+        mach_msg_size_t send_size,
+        mach_msg_size_t rcv_limit,
+        mach_port_t rcv_name,
+        mach_msg_timeout_t timeout,
+        mach_port_t notify,
+        mach_msg_header_t *rcv_msg,
+        __unused mach_msg_size_t rcv_scatter_size)
+{
+    mach_msg_return_t mr;
+    mach_msg_aux_header_t *aux;
+    mach_msg_vector_t vecs[2];
+
+    uint8_t inline_aux_buf[LIBSYSCALL_MSGV_AUX_MAX_SIZE];
+
+    mach_msg_priority_t priority = 0;
+    mach_msg_size_t aux_sz = 0;
+    mach_msg_option64_t option64 = (mach_msg_option64_t)option;
+
+    aux = (mach_msg_aux_header_t *)inline_aux_buf;
+#if 0
+    if (voucher_mach_msg_fill_aux_supported() &&
+            (option64 & MACH64_RCV_MSG) && (option64 & MACH64_RCV_VOUCHER)) {
+        option64 |= MACH64_MSG_VECTOR;
+        if (!(aux = _os_tsd_get_direct(__TSD_MACH_MSG_AUX))) {
+            aux = malloc(LIBSYSCALL_MSGV_AUX_MAX_SIZE);
+            if (aux) {
+                /* will be freed during TSD teardown */
+                _os_tsd_set_direct(__TSD_MACH_MSG_AUX, aux);
+            } else {
+                /* revert to use on stack buffer */
+                aux = (mach_msg_aux_header_t *)inline_aux_buf;
+                option64 &= ~MACH64_MSG_VECTOR;
+            }
+        }
+    }
+#endif
+
+    if ((option64 & MACH64_RCV_MSG) && rcv_msg != NULL) {
+        option64 |= MACH64_MSG_VECTOR;
+    }
+
+#if 0
+    if ((option64 & MACH64_SEND_MSG) &&
+            /* this returns 0 for Libsyscall_static due to weak linking */
+            ((aux_sz = voucher_mach_msg_fill_aux(aux, LIBSYSCALL_MSGV_AUX_MAX_SIZE)) != 0)) {
+        option64 |= MACH64_MSG_VECTOR;
+    }
+#endif
+
+    if (option64 & MACH64_MSG_VECTOR) {
+        vecs[MACH_MSGV_IDX_MSG] = (mach_msg_vector_t){
+            .msgv_data = msg,
+                .msgv_rcv_addr = rcv_msg, /* if 0, just use msg as rcv address */
+                .msgv_send_size = send_size,
+                .msgv_rcv_size = rcv_limit,
+        };
+        vecs[MACH_MSGV_IDX_AUX] = (mach_msg_vector_t){
+            .msgv_data = aux,
+                .msgv_rcv_addr = 0,
+                .msgv_send_size = aux_sz,
+                .msgv_rcv_size = LIBSYSCALL_MSGV_AUX_MAX_SIZE,
+        };
+    }
+
+    if (option64 & MACH64_SEND_MSG) {
+        priority = (mach_msg_priority_t)notify;
+    }
+
+    if ((option64 & MACH64_RCV_MSG) &&
+            !(option64 & MACH64_SEND_MSG) &&
+            (option64 & MACH64_RCV_SYNC_WAIT)) {
+        msg->msgh_remote_port = notify;
+    }
+    option64 |= MACH64_SEND_MQ_CALL;
+    if (option64 & MACH64_MSG_VECTOR) {
+        mr = manual_mach_msg2(vecs, option64, *msg, 2, 2,
+                rcv_name, timeout, priority);
+    } else {
+        mr = manual_mach_msg2(msg, option64, *msg, send_size,
+                rcv_limit, rcv_name, timeout, priority);
+    }
+
+    return mr;
+}
+
+static mach_msg_return_t manual_new_mach_msg(
+        mach_msg_header_t *msg,
+        mach_msg_option_t option,
+        mach_msg_size_t send_size,
+        mach_msg_size_t rcv_limit,
+        mach_port_t rcv_name,
+        mach_msg_timeout_t timeout,
+        mach_port_t notify)
+{
+    return manual_new_mach_msg_overwrite(msg, option, send_size, rcv_limit, rcv_name, timeout, notify, NULL, 0);
+}
 
 static void manual_memcpy(void *restrict dest, const void *src, size_t len) {
     /* volatile to avoid compiler transformation to call to memcpy */
@@ -46,6 +349,22 @@ static void manual_memcpy(void *restrict dest, const void *src, size_t len) {
     const uint8_t *s8 = src;
     while (len--)
         *d8++ = *s8++;
+}
+
+static inline mach_msg_return_t manual_mach_msg(
+        mach_msg_header_t *msg,
+        mach_msg_option64_t option,
+        mach_msg_size_t send_size,
+        mach_msg_size_t rcv_limit,
+        mach_port_t rcv_name,
+        mach_msg_timeout_t timeout,
+        mach_port_t notify)
+{
+    if ((volatile void *)&mach_msg2_internal != NULL) {
+        return manual_mach_msg2(msg, option, *msg, send_size, rcv_limit, rcv_name, timeout, notify);
+    } else {
+        return manual_old_mach_msg(msg, option&0xFFFFFFFF, send_size, rcv_limit, rcv_name, timeout, notify);
+    }
 }
 
 #pragma GCC diagnostic push
@@ -477,18 +796,10 @@ retry_chunk:
             }
             vm_prot_t c, m;
             mach_vm_address_t target = page_start + shift;
-            if ((volatile void *)&mach_msg2_internal != NULL) {
-                // TODO: Implement manual_mach_vm_remap for iOS16+
-                kr = mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
-                                          VM_FLAGS_OVERWRITE, task_self,
-                                          (mach_vm_address_t) new, /*copy*/ TRUE,
-                                          &c, &m, inherit);
-            } else {
-                kr = manual_mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
-                                          VM_FLAGS_OVERWRITE, task_self,
-                                          (mach_vm_address_t) new, /*copy*/ TRUE,
-                                          &c, &m, inherit, reply_port);
-            }
+            kr = manual_mach_vm_remap(mach_task_self(), &target, page_chunk, 0,
+                                      VM_FLAGS_OVERWRITE, task_self,
+                                      (mach_vm_address_t) new, /*copy*/ TRUE,
+                                      &c, &m, inherit, reply_port);
             if (kr) {
                 LOG("manual_mach_vm_remap failed");
                 ret = SUBSTITUTE_ERR_VM;
