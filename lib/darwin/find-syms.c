@@ -400,7 +400,7 @@ static void inspect_dyld() {
         }
     }
 
-    const char *names[10] = { "__ZNK16ImageLoaderMachO8getSlideEv",
+    const char *names[] = { "__ZNK16ImageLoaderMachO8getSlideEv",
                              "__ZNK16ImageLoaderMachO10machHeaderEv",
                              "__ZN4dyldL20sAllCacheImagesProxyE",
                              "__ZN20ImageLoaderMegaDylib13isCacheHandleEPvPjPh",
@@ -411,45 +411,63 @@ static void inspect_dyld() {
                              "__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE",
                              "__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE",
     };
-    void *syms[10];
+
+    struct {
+        void *__ZNK16ImageLoaderMachO8getSlideEv;
+        void *__ZNK16ImageLoaderMachO10machHeaderEv;
+        void *__ZN4dyldL20sAllCacheImagesProxyE;
+        void *__ZN20ImageLoaderMegaDylib13isCacheHandleEPvPjPh;
+        void *__ZNK20ImageLoaderMegaDylib8getSlideEv;
+        void *__ZNK20ImageLoaderMegaDylib20getIndexedMachHeaderEj;
+        void *__ZNK5dyld311MachOLoaded8getSlideEv;
+        void *__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE;
+        void *__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE;
+        void *__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE
+    } syms;
+
     intptr_t dyld_slide = -1;
-    find_syms_raw(dyld_hdr, &dyld_slide, names, syms, 10);
-    if (syms[6] && (syms[7] || syms[8]) && syms[9]) {
+    find_syms_raw(dyld_hdr, &dyld_slide, names, (void**)&syms, sizeof(syms) / sizeof(void *));
+    if (syms.__ZNK5dyld311MachOLoaded8getSlideEv && (syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE || syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE) && syms.__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE) {
         isUsingDyld4 = true;
-        dyld3_MachOLoaded_getSlide = make_sym_callable(syms[6]);
-        dyld4_Loader_loadAddress = make_sym_callable(syms[7] ? syms[7] : syms[8]);
-        dyld4_Loader_validLoader = make_sym_callable(syms[9]);
+        dyld3_MachOLoaded_getSlide = make_sym_callable(syms.__ZNK5dyld311MachOLoaded8getSlideEv);
+        dyld4_Loader_loadAddress = make_sym_callable(syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE ? syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE : syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE);
+        dyld4_Loader_validLoader = make_sym_callable(syms.__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE);
     } else {
-        if (!syms[0] || !syms[1])
+        if (!syms.__ZNK16ImageLoaderMachO8getSlideEv || !syms.__ZNK16ImageLoaderMachO10machHeaderEv)
             substitute_panic("couldn't find ImageLoader methods\n");
-        ImageLoaderMachO_getSlide = make_sym_callable(syms[0]);
-        ImageLoaderMachO_machHeader = make_sym_callable(syms[1]);
-        dyld_sAllCacheImagesProxy = syms[2];
-        ImageLoaderMegaDylib_isCacheHandle = make_sym_callable(syms[3]);
-        ImageLoaderMegaDylib_getSlide = make_sym_callable(syms[4]);
-        ImageLoaderMegaDylib_getIndexedMachHeader = make_sym_callable(syms[5]);
+        ImageLoaderMachO_getSlide = make_sym_callable(syms.__ZNK16ImageLoaderMachO8getSlideEv);
+        ImageLoaderMachO_machHeader = make_sym_callable(syms.__ZNK16ImageLoaderMachO10machHeaderEv);
+        dyld_sAllCacheImagesProxy = syms.__ZN4dyldL20sAllCacheImagesProxyE;
+        ImageLoaderMegaDylib_isCacheHandle = make_sym_callable(syms.__ZN20ImageLoaderMegaDylib13isCacheHandleEPvPjPh);
+        ImageLoaderMegaDylib_getSlide = make_sym_callable(syms.__ZNK20ImageLoaderMegaDylib8getSlideEv);
+        ImageLoaderMegaDylib_getIndexedMachHeader = make_sym_callable(syms.__ZNK20ImageLoaderMegaDylib20getIndexedMachHeaderEj);
     }
 
 
     if (libdyld_hdr == NULL){
         return;
     }
-    const char *libdyld_names[3] = {
+    const char *libdyld_names[] = {
         "_gUseDyld3",
         "__ZNK5dyld311MachOLoaded8getSlideEv",
         "__ZN5dyld45gDyldE",
     };
-    void *libdyld_syms[3];
-    find_syms_raw(libdyld_hdr, &libdyld_slide, libdyld_names, libdyld_syms, 3);
+    struct {
+        bool *_gUseDyld3;
+        void *__ZNK5dyld311MachOLoaded8getSlideEv;
+        void *__ZN5dyld45gDyldE;
+    } libdyld_syms;
 
-    if (libdyld_syms[0]) {
-        isUsingDyld3 = *(bool *)(libdyld_syms[0]);
+    find_syms_raw(libdyld_hdr, &libdyld_slide, libdyld_names, (void**)&libdyld_syms, sizeof(libdyld_syms) / sizeof(void *));
+
+    if (libdyld_syms._gUseDyld3) {
+        isUsingDyld3 = *libdyld_syms._gUseDyld3;
     }
-    if (libdyld_syms[1]) {
-        dyld3_MachOLoaded_getSlide = make_sym_callable(libdyld_syms[1]);
+    if (libdyld_syms.__ZNK5dyld311MachOLoaded8getSlideEv) {
+        dyld3_MachOLoaded_getSlide = make_sym_callable(libdyld_syms.__ZNK5dyld311MachOLoaded8getSlideEv);
     }
-    if (libdyld_syms[2]) {
-        dyld4_runtimeState_addr = libdyld_syms[2];
+    if (libdyld_syms.__ZN5dyld45gDyldE) {
+        dyld4_runtimeState_addr = libdyld_syms.__ZN5dyld45gDyldE;
     } else if (isUsingDyld4) {
         substitute_panic("couldn't find dyld4::runtimeState\n");
     }
