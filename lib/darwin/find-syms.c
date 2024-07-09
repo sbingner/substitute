@@ -400,7 +400,7 @@ static void inspect_dyld() {
         }
     }
 
-    const char *names[9] = { "__ZNK16ImageLoaderMachO8getSlideEv",
+    const char *names[10] = { "__ZNK16ImageLoaderMachO8getSlideEv",
                              "__ZNK16ImageLoaderMachO10machHeaderEv",
                              "__ZN4dyldL20sAllCacheImagesProxyE",
                              "__ZN20ImageLoaderMegaDylib13isCacheHandleEPvPjPh",
@@ -408,16 +408,17 @@ static void inspect_dyld() {
                              "__ZNK20ImageLoaderMegaDylib20getIndexedMachHeaderEj",
                              "__ZNK5dyld311MachOLoaded8getSlideEv",
                              "__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE",
+                             "__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE",
                              "__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE",
     };
-    void *syms[9];
+    void *syms[10];
     intptr_t dyld_slide = -1;
-    find_syms_raw(dyld_hdr, &dyld_slide, names, syms, 9);
-    if (syms[6] && syms[7] && syms[8]) {
+    find_syms_raw(dyld_hdr, &dyld_slide, names, syms, 10);
+    if (syms[6] && (syms[7] || syms[8]) && syms[9]) {
         isUsingDyld4 = true;
         dyld3_MachOLoaded_getSlide = make_sym_callable(syms[6]);
-        dyld4_Loader_loadAddress = make_sym_callable(syms[7]);
-        dyld4_Loader_validLoader = make_sym_callable(syms[8]);
+        dyld4_Loader_loadAddress = make_sym_callable(syms[7] ? syms[7] : syms[8]);
+        dyld4_Loader_validLoader = make_sym_callable(syms[9]);
     } else {
         if (!syms[0] || !syms[1])
             substitute_panic("couldn't find ImageLoader methods\n");
