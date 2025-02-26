@@ -451,11 +451,13 @@ static void inspect_dyld() {
         "_gUseDyld3",
         "__ZNK5dyld311MachOLoaded8getSlideEv",
         "__ZN5dyld45gDyldE",
+        "__ZN5dyld45gAPIsE",
     };
     struct {
         bool *_gUseDyld3;
         void *__ZNK5dyld311MachOLoaded8getSlideEv;
         void *__ZN5dyld45gDyldE;
+        void *__ZN5dyld45gAPIsE;
     } libdyld_syms;
 
     find_syms_raw(libdyld_hdr, &libdyld_slide, libdyld_names, (void**)&libdyld_syms, sizeof(libdyld_syms) / sizeof(void *));
@@ -468,6 +470,8 @@ static void inspect_dyld() {
     }
     if (libdyld_syms.__ZN5dyld45gDyldE) {
         dyld4_runtimeState_addr = libdyld_syms.__ZN5dyld45gDyldE;
+    } else if (libdyld_syms.__ZN5dyld45gAPIsE) {
+        dyld4_runtimeState_addr = libdyld_syms.__ZN5dyld45gAPIsE;
     } else if (isUsingDyld4) {
         substitute_panic("couldn't find dyld4::runtimeState\n");
     }
