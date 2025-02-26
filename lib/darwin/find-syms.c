@@ -389,14 +389,20 @@ const void *dyld_hdr;
 static void inspect_dyld() {
     const struct dyld_all_image_infos *aii = dyld_get_all_image_infos();
     dyld_hdr = aii->dyldImageLoadAddress;
+#if TARGET_OS_SIMULATOR
+    if (strstr(_dyld_get_image_name(0), "dyld_sim")) {
+        dyld_hdr = _dyld_get_image_header(0);
+    }
+#endif
 
     const void *libdyld_hdr = NULL;
     intptr_t libdyld_slide = 0;
     for(uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *im_name = _dyld_get_image_name(i);
-        if (strcmp(im_name, "/usr/lib/system/libdyld.dylib") == 0){
+        if (strstr(im_name, "/usr/lib/system/libdyld.dylib")) {
             libdyld_hdr = _dyld_get_image_header(i);
             libdyld_slide = _dyld_get_image_vmaddr_slide(i);
+            break;
         }
     }
 
