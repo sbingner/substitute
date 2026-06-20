@@ -32,6 +32,9 @@ static struct mach_header_64 *(*dyld4_Loader_loadAddress)(const void *dlhandle, 
 static int (*dyld4_Loader_validLoader)(const void *runtimeState, const void *dlhandle);
 static void **dyld4_runtimeState_addr;
 
+static struct mach_header_64 *(*dyld_get_dlopen_image_header)(void *dlhandle);
+static uintptr_t (*dyld_get_image_slide)(const void *mh);
+
 
 static const struct dyld_cache_header *_Atomic s_cur_shared_cache_hdr;
 static struct dyld_cache_header l_s_cur_shared_cache_hdr;
@@ -416,6 +419,8 @@ static void inspect_dyld() {
                              "__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE",
                              "__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE",
                              "__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE",
+                             "__ZNK6mach_o6Header8getSlideEv",
+                             "__ZN5dyld4L24sExternallyViewableStateE",
     };
 
     struct {
@@ -428,12 +433,21 @@ static void inspect_dyld() {
         void *__ZNK5dyld311MachOLoaded8getSlideEv;
         void *__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE;
         void *__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE;
-        void *__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE
+        void *__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE;
+        void *__ZNK6mach_o6Header8getSlideEv;
+        void *__ZN5dyld4L24sExternallyViewableStateE;
     } syms;
 
     intptr_t dyld_slide = -1;
     find_syms_raw(dyld_hdr, &dyld_slide, names, (void**)&syms, sizeof(syms) / sizeof(void *));
-    if (syms.__ZNK5dyld311MachOLoaded8getSlideEv && (syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE || syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE) && syms.__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE) {
+    if (syms.__ZNK6mach_o6Header8getSlideEv && syms.__ZN5dyld4L24sExternallyViewableStateE) {
+        // iOS 27+
+        isUsingDyld4 = true;
+
+        dyld3_MachOLoaded_getSlide = make_sym_callable(syms.__ZNK6mach_o6Header8getSlideEv);
+        dyld4_Loader_loadAddress = make_sym_callable(syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE ? syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE : syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE);
+        dyld4_Loader_validLoader = make_sym_callable(syms.__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE);
+    } else if (syms.__ZNK5dyld311MachOLoaded8getSlideEv && (syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE || syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE) && syms.__ZN5dyld44APIs11validLoaderEPKNS_6LoaderE) {
         isUsingDyld4 = true;
         dyld3_MachOLoaded_getSlide = make_sym_callable(syms.__ZNK5dyld311MachOLoaded8getSlideEv);
         dyld4_Loader_loadAddress = make_sym_callable(syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE ? syms.__ZNK5dyld46Loader11loadAddressERNS_12RuntimeStateE : syms.__ZNK5dyld46Loader11loadAddressERKNS_12RuntimeStateE);
@@ -458,16 +472,24 @@ static void inspect_dyld() {
         "__ZNK5dyld311MachOLoaded8getSlideEv",
         "__ZN5dyld45gDyldE",
         "__ZN5dyld45gAPIsE",
+        "__dyld_get_dlopen_image_header",
+        "__dyld_get_image_slide",
     };
     struct {
         bool *_gUseDyld3;
         void *__ZNK5dyld311MachOLoaded8getSlideEv;
         void *__ZN5dyld45gDyldE;
         void *__ZN5dyld45gAPIsE;
+        void *__dyld_get_dlopen_image_header;
+        void *__dyld_get_image_slide;
     } libdyld_syms;
 
     find_syms_raw(libdyld_hdr, &libdyld_slide, libdyld_names, (void**)&libdyld_syms, sizeof(libdyld_syms) / sizeof(void *));
 
+    if (libdyld_syms.__dyld_get_dlopen_image_header && libdyld_syms.__dyld_get_image_slide) {
+        dyld_get_dlopen_image_header = make_sym_callable(libdyld_syms.__dyld_get_dlopen_image_header);
+        dyld_get_image_slide = make_sym_callable(libdyld_syms.__dyld_get_image_slide);
+    }
     if (libdyld_syms._gUseDyld3) {
         isUsingDyld3 = *libdyld_syms._gUseDyld3;
     }
@@ -478,6 +500,8 @@ static void inspect_dyld() {
         dyld4_runtimeState_addr = libdyld_syms.__ZN5dyld45gDyldE;
     } else if (libdyld_syms.__ZN5dyld45gAPIsE) {
         dyld4_runtimeState_addr = libdyld_syms.__ZN5dyld45gAPIsE;
+    } else if (syms.__ZN5dyld4L24sExternallyViewableStateE) {
+        dyld4_runtimeState_addr = *((void**)syms.__ZN5dyld4L24sExternallyViewableStateE + 1);
     } else if (isUsingDyld4) {
         substitute_panic("couldn't find dyld4::runtimeState\n");
     }
@@ -496,15 +520,19 @@ struct substitute_image *substitute_open_image(const char *filename) {
 
     void* image;
     if (isUsingDyld4) {
-        dlhandle = ptrauth_strip(dlhandle, ptrauth_key_process_dependent_data);
-        uint64_t dladdr = ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr;
-        if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
-            dladdr = (uint64_t)dlhandle >> 1; // iOS15
+        if (dyld_get_dlopen_image_header) {
+            image = dyld_get_dlopen_image_header(dlhandle);
+        } else {
+            dlhandle = ptrauth_strip(dlhandle, ptrauth_key_process_dependent_data);
+            uint64_t dladdr = ((uint64_t)dlhandle & -2LL) ^ (uint64_t)dyld_hdr;
             if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
-                substitute_panic("substitute_open_image: Unable to find valid loader addr from handle\n");
+                dladdr = (uint64_t)dlhandle >> 1; // iOS15
+                if (!dyld4_Loader_validLoader(*dyld4_runtimeState_addr, dladdr)) {
+                    substitute_panic("substitute_open_image: Unable to find valid loader addr from handle\n");
+                }
             }
+            image = dyld4_Loader_loadAddress(dladdr, *dyld4_runtimeState_addr);
         }
-        image = dyld4_Loader_loadAddress(dladdr, *dyld4_runtimeState_addr);
     } else if (isUsingDyld3) {
         image = (void*)((((uintptr_t)dlhandle) & (-2)) << 5);
     } else {
@@ -514,7 +542,10 @@ struct substitute_image *substitute_open_image(const char *filename) {
     uint8_t mode;
     const void *image_header = NULL;
     intptr_t slide;
-    if (dyld3_MachOLoaded_getSlide != NULL && (isUsingDyld3 || isUsingDyld4)) {
+    if (dyld_get_image_slide) {
+        image_header = image;
+        slide = dyld_get_image_slide(image);
+    } else if (dyld3_MachOLoaded_getSlide != NULL && (isUsingDyld3 || isUsingDyld4)) {
         uint32_t magic = *((uint32_t *)image);
         if ((magic == MH_MAGIC || magic == MH_MAGIC_64) && dyld3_MachOLoaded_getSlide != NULL){
             image_header = (const void *)image;
