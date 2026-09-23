@@ -144,16 +144,18 @@ fail:
 static void open_shared_cache_file_once() {
     s_cur_shared_cache_fd = -1;
     const struct dyld_cache_header *dch = s_cur_shared_cache_hdr;
-    if (memcmp(dch->magic, "dyld_v1 ", 8)) {
+    if (memcmp(dch->magic, "dyld_v1", 7)) {
         return;
     }
     if (dch->localSymbolsSize < sizeof(struct dyld_cache_local_symbols_info)) {
         // Probably ios15+ split cache
         //return;
     }
-    const char *archp = &dch->magic[8];
+    const char *archp = &dch->magic[7];
     while (*archp == ' ')
         archp++;
+    if (strcmp(archp, "arm64ex1") == 0)
+        archp = "arm64e_x1";
     static char filename[32];
     const char *env_dir = getenv("DYLD_SHARED_CACHE_DIR");
     if (env_dir) {
