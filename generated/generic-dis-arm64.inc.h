@@ -92,7 +92,9 @@
             }
         }
         case 1: {
-            if ((op & 0xff000010) == 0x54000000) {
+            if ((op & 0xFFC0001F) == 0x5500001F) {
+                return P(ret)(ctx);
+            } else if ((op & 0xff000010) == 0x54000000) {
                 struct bitslice cond = {.nruns = 1, .runs = (struct bitslice_run[]) {{0,0,4}}};
                 struct bitslice target = {.nruns = 1, .runs = (struct bitslice_run[]) {{5,0,19}}};
                 return P(ccode_cond_am_brcond_target_B_1_Bcc)(ctx, cond, target); /* 0x54000000 | 0x00ffffef */
@@ -207,7 +209,7 @@
             }
         }
         case 9: {
-            if ((op & 0xfffffc1f) == 0xd65f0000 || (op & 0xfffffbff) == 0xd65f0bff) {
+            if ((op & 0xfffffc1f) == 0xd65f0000 || (op & 0xfffffbe0) == 0xD65F0BE0) {
                 goto insn_GPR64_Rn_2_BLR; /* 0xd65f0000 | 0x000003e0 */
             } else {
                 return P(unidentified)(ctx);
